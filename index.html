@@ -311,33 +311,70 @@ src="https://www.facebook.com/tr?id=1447965727176059&ev=PageView&noscript=1"
   var TG_LINK = "https://t.me/+yYJ76thUvFFkNDJl";
   var PIXEL_ID = "1447965727176059";
   var STORAGE_KEY = "tg_lead_fired_anish_forex";
+  var DEVICE_KEY = "tg_lead_device_anish_forex";
+  var DEVICE_TTL = 24 * 60 * 60 * 1000; // 24 hours - stops the same phone re-crediting on a new session
 
   var pageLoadTime = Date.now();
-  var hasInteracted = false;
+  var hasRealInteraction = false; // scroll / touch-move / mouse-move / keydown seen
+  var hasPointerDown = false;     // a genuine pointerdown happened before the click
 
-  function markInteraction(){ hasInteracted = true; }
+  // 1) Basic bot / headless / automation detection
+  function looksLikeBot(){
+    try{
+      if (navigator.webdriver) return true;
+      var ua = navigator.userAgent || "";
+      if (/HeadlessChrome|PhantomJS|Puppeteer|Selenium|bot|crawler|spider|Googlebot|bingbot/i.test(ua)) return true;
+      if (navigator.languages && navigator.languages.length === 0) return true;
+    }catch(e){}
+    return false;
+  }
+  var isBot = looksLikeBot();
+
+  // 2) Only count interaction/pointer events that the browser marks as user-trusted
+  //    (this blocks scripted/synthetic click-bots that dispatch fake events)
+  function markInteraction(e){
+    if (e && e.isTrusted === false) return;
+    hasRealInteraction = true;
+  }
   ["scroll","touchstart","touchmove","mousemove","keydown"].forEach(function(evt){
-    window.addEventListener(evt, markInteraction, {passive:true, once:true});
+    window.addEventListener(evt, markInteraction, {passive:true});
   });
+  document.addEventListener("pointerdown", function(e){
+    if (e && e.isTrusted !== false) hasPointerDown = true;
+  }, {passive:true});
 
   function isRealClick(e){
-    if (!e || e.isTrusted === false) return false;
+    if (isBot) return false;
+    if (!e || e.isTrusted === false) return false;   // blocks synthetic .click() calls
     var dwell = Date.now() - pageLoadTime;
-    if (dwell < 1500 && !hasInteracted) return false;
+    if (dwell < 1800) return false;                  // must actually stay on page briefly
+    if (!hasRealInteraction) return false;            // must show some real activity
+    if (!hasPointerDown) return false;                // click must be preceded by a real touch/mouse-down
     return true;
   }
 
-  function alreadyFired(){
+  function alreadyFiredThisSession(){
     try { return sessionStorage.getItem(STORAGE_KEY) === "1"; }
     catch(e){ return false; }
   }
-  function markFired(){
+  function markFiredThisSession(){
     try { sessionStorage.setItem(STORAGE_KEY, "1"); } catch(e){}
+  }
+  function alreadyFiredThisDevice(){
+    try {
+      var raw = localStorage.getItem(DEVICE_KEY);
+      if (!raw) return false;
+      return (Date.now() - parseInt(raw, 10)) < DEVICE_TTL;
+    } catch(e){ return false; }
+  }
+  function markFiredThisDevice(){
+    try { localStorage.setItem(DEVICE_KEY, String(Date.now())); } catch(e){}
   }
 
   function fireLead(){
-    if (alreadyFired()) return;
-    markFired();
+    if (alreadyFiredThisSession() || alreadyFiredThisDevice()) return;
+    markFiredThisSession();
+    markFiredThisDevice();
     if (typeof fbq === "function") {
       fbq('track', 'Subscribe', {content_name: 'Learn Forex Skills with Anish Thakur'});
     }
@@ -372,8 +409,23 @@ src="https://www.facebook.com/tr?id=1447965727176059&ev=PageView&noscript=1"
         e.preventDefault();
         return false;
       }
-      fireLead();
-      // real anchor href navigation proceeds natively — no preventDefault, no setTimeout delay
+      // real anchor href navigation proceeds natively — no preventDefault
+      // credit the lead only once the tab actually starts leaving (confirms
+      // a genuine redirect attempt, not just a stray/accidental tap)
+      var credited = false;
+      function credit(){
+        if (credited) return;
+        credited = true;
+        fireLead();
+      }
+      document.addEventListener('visibilitychange', function onHide(){
+        if (document.hidden) {
+          document.removeEventListener('visibilitychange', onHide);
+          credit();
+        }
+      });
+      window.addEventListener('pagehide', credit, {once:true});
+      setTimeout(credit, 700); // fallback for browsers where the above don't fire in time
     }, {passive:false});
   });
 
