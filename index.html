@@ -410,22 +410,38 @@ src="https://www.facebook.com/tr?id=1447965727176059&ev=PageView&noscript=1"
         return false;
       }
       // real anchor href navigation proceeds natively — no preventDefault
-      // credit the lead only once the tab actually starts leaving (confirms
-      // a genuine redirect attempt, not just a stray/accidental tap)
+      // credit the lead ONLY once the tab actually leaves/backgrounds —
+      // that is the one real signal that Telegram (or its app-switch)
+      // actually opened. We do NOT credit on a blind timer: inside a
+      // broken in-app browser (Facebook/Instagram, especially iOS, where
+      // Apple blocks the app hand-off entirely) the click looks "real"
+      // but the redirect silently fails and the user never reaches
+      // Telegram — a timer-based fallback was crediting those as leads
+      // anyway, which is exactly what inflated Meta's numbers above the
+      // real Telegram join count.
       var credited = false;
+      var confirmTimer = null;
+      function cleanup(){
+        document.removeEventListener('visibilitychange', onHide);
+        window.removeEventListener('pagehide', credit);
+        if (confirmTimer) { clearTimeout(confirmTimer); confirmTimer = null; }
+      }
       function credit(){
         if (credited) return;
         credited = true;
+        cleanup();
         fireLead();
       }
-      document.addEventListener('visibilitychange', function onHide(){
-        if (document.hidden) {
-          document.removeEventListener('visibilitychange', onHide);
-          credit();
-        }
-      });
+      function onHide(){
+        if (document.hidden) credit();
+      }
+      document.addEventListener('visibilitychange', onHide);
       window.addEventListener('pagehide', credit, {once:true});
-      setTimeout(credit, 700); // fallback for browsers where the above don't fire in time
+      // Give the OS a real window to actually hand off to Telegram.
+      // If the tab is still sitting here after this, the redirect
+      // failed (dead in-app-browser click) — stop listening and do
+      // NOT credit a lead for a click that never reached Telegram.
+      confirmTimer = setTimeout(cleanup, 3000);
     }, {passive:false});
   });
 
